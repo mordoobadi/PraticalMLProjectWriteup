@@ -97,7 +97,7 @@ In this report three prediction models are considered and compared.
 3. Boosting Model (XGBOOST)
 
 ##Decision Tree Model
-A decision tree model was used to predict the outcomes of the validation set and the prediction accurracy of this model was 85.37%. 
+A decision tree model was used to predict the outcomes of the validation set and the prediction accuracy of this model was 85.37%. 
 ```{r cache=TRUE}
 # Using Decision Trees
 modelFitDT <- rpart(classe ~ ., data=training, method="class")
@@ -161,7 +161,7 @@ confusionMatrix(predsXGB, testing$label)
 ##Combined Model
 In order to see if we can improve the prediction accuracy we combined the two best models 
 Random Forests Model and Boosting Model to make predictions and then evaluated the prediction 
-accuracy. But the performance was exactly the same as the our best model the Random Forests model.
+accuracy. But the performance was exactly the same as our best model the Random Forests model.
 ```{r cache=TRUE}
 ## Combined Models
 predsRFXGB <- data.frame(predsRF, predsXGB, label=testing$label)
