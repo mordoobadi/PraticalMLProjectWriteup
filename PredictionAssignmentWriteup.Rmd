@@ -1,0 +1,205 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Mehrdad Ordoobadi"
+date: "November 22, 2015"
+output: html_document
+---
+
+#Synopsis
+This report studies Body postures and movements of six participants. These participants 
+were asked to perform barbell lifts correctly and incorrectly in 5 different ways and 
+their movements were digitized based on accelerometers readings on the belt, forearm, 
+and dumbell. 
+
+The outcome (classe), is a variable with levels A, B, C, D, and E as described below:
+
+* Class A - exactly according to the specification
+* Class B - throwing the elbows to the front
+* Class C - lifting the dumbbell only halfway
+* Class D - lowering the dumbbell only halfway
+* Class E - throwing the hips to the front
+
+The goal of this study is to predict the manner in which these participants did the exercise.  
+
+#Data
+The data for this project comes from a paper on Human Activity Recognition by Wallace 
+Ugulino, Eduardo Velloso, and Hugo Fuks. This paper is available at http://groupware.les.inf.puc-rio.br/har. 
+
+The training data for this study are available at https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available at https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+#Data Processing
+Training and Testing data was read into R and was cleaned up and also transformed to be 
+usable by our machine learning models.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+require(caret)
+require(rpart) 
+require(randomForest)
+require(xgboost)
+```
+
+```{r cache=TRUE}
+trainDataSet <- read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!", ""))
+testDataSet  <- read.csv("pml-testing.csv", na.strings = c("NA", "#DIV/0!", ""))
+
+#Data Cleanup
+
+numTrainingRecords <- dim(trainDataSet)[1]
+feauture.names <- names(trainDataSet)
+numFeatures <- length(trainDataSet)
+
+columnsToRemove <- c()
+
+## Remove columns that have many NA's (more than 50% of number of records)
+for(iCol in 1:numFeatures) {
+  if(sum(is.na(trainDataSet[, iCol])) > 0.50 * numTrainingRecords) {
+    columnsToRemove <- c(columnsToRemove, iCol)
+  }
+}
+  
+trainDataSet <- trainDataSet[, -columnsToRemove]
+
+# remove columns X and cvtd_timestamp
+trainDataSet <- trainDataSet[, -c(1, 5)]
+
+# Replace yes/no with 1/0 in the new_window column
+trainDataSet$new_window <- as.character(trainDataSet$new_window)
+trainDataSet[trainDataSet$new_window == "no", "new_window"] <- "0"
+trainDataSet[trainDataSet$new_window == "yes", "new_window"] <- "1"
+trainDataSet$new_window <- as.integer(trainDataSet$new_window)
+
+testDataSet$new_window <- as.character(testDataSet$new_window)
+testDataSet[testDataSet$new_window == "no", "new_window"] <- "0"
+testDataSet[testDataSet$new_window == "yes", "new_window"] <- "1"
+testDataSet$new_window <- as.integer(testDataSet$new_window)
+```
+
+##Partitioning Data into Training and Cross Validation Data Sets
+For reproducibility a seed of 0 is used in this report.
+
+```{r cache=TRUE}
+## Split the training data to training and cross validation data sets
+set.seed(0)
+
+inTrain <- createDataPartition(y=trainDataSet$classe, p=0.70, list=FALSE)
+
+training <- trainDataSet[inTrain, ]
+testing <- trainDataSet[-inTrain, ]
+```
+
+#Prediction Models
+In this report three prediction models are considered and compared.
+
+1. Decision Tree Model
+2. Random Forests Model
+3. Boosting Model (XGBOOST)
+
+##Decision Tree Model
+A decision tree model was used to predict the outcomes of the validation set and the prediction accurracy of this model was 85.37%. 
+```{r cache=TRUE}
+# Using Decision Trees
+modelFitDT <- rpart(classe ~ ., data=training, method="class")
+
+predsDT <- predict(modelFitDT, testing, type="class")
+
+confusionMatrix(predsDT, testing$classe)
+```
+
+
+##Random Forests Model
+The Random Forests model performed much better than the Decision Tree model with a prediction accuracy of 99.93%.
+```{r cache=TRUE}
+# Using Random Forests
+modelFitRF <- randomForest(classe ~., data=training)
+
+predsRF <- predict(modelFitRF, testing, type = "class")
+
+confusionMatrix(predsRF, testing$classe)
+```
+
+
+
+##Boosting Model
+The Boosting model performed similar to but not as well as the Random Forests model with a prediction accuracy of 99.76%.
+The XGBOOST package was used to make the prediction model.
+```{r cache=TRUE}
+# Using XGBOOST
+training[training$classe == "A", "label"] <- 0
+training[training$classe == "B", "label"] <- 1
+training[training$classe == "C", "label"] <- 2
+training[training$classe == "D", "label"] <- 3
+training[training$classe == "E", "label"] <- 4
+
+testing[testing$classe == "A", "label"] <- 0
+testing[testing$classe == "B", "label"] <- 1
+testing[testing$classe == "C", "label"] <- 2
+testing[testing$classe == "D", "label"] <- 3
+testing[testing$classe == "E", "label"] <- 4
+
+dval<-xgb.DMatrix(data=data.matrix(testing[, -c(58:59)]),label=testing$label)
+dtrain<-xgb.DMatrix(data=data.matrix(training[, -c(58:59)]),label=training$label)
+watchlist<-list(val=dval,train=dtrain)
+
+param <- list(  objective           = "multi:softmax", 
+                booster             = "gbtree",
+                silent              = 1,
+                eta                 = 0.1,
+                max_depth           = 10, #changed from default of 8
+                num_class = 5
+)
+
+modelFitXGB <- xgb.train(param, dtrain, 100, watchlist )
+
+predsXGB <- predict(modelFitXGB, data.matrix(testing[, -c(58:59)]))
+
+confusionMatrix(predsXGB, testing$label)
+```
+
+ 
+##Combined Model
+In order to see if we can improve the prediction accuracy we combined the two best models 
+Random Forests Model and Boosting Model to make predictions and then evaluated the prediction 
+accuracy. But the performance was exactly the same as the our best model the Random Forests model.
+```{r cache=TRUE}
+## Combined Models
+predsRFXGB <- data.frame(predsRF, predsXGB, label=testing$label)
+
+predsRFXGB[predsRFXGB$predsRF == "A", "labelRF"] <- 0
+predsRFXGB[predsRFXGB$predsRF == "B", "labelRF"] <- 1
+predsRFXGB[predsRFXGB$predsRF == "C", "labelRF"] <- 2
+predsRFXGB[predsRFXGB$predsRF == "D", "labelRF"] <- 3
+predsRFXGB[predsRFXGB$predsRF == "E", "labelRF"] <- 4
+predsRFXGB <- predsRFXGB[-1]
+
+modelFitCombined <- train(label ~., method="gam", data=predsRFXGB)
+predsCombined <- predict(modelFitCombined, predsRFXGB)
+predsCombined <- round(predsCombined)
+
+confusionMatrix(predsCombined, predsRFXGB$label)
+```
+
+
+#Summary of Results
+
+Since the Random Forests model performed best among all model, we use that model for our predictions. The out-of-sample error for the model is calculated below as a percentage.
+
+```{r cache=TRUE}
+outOfSampleError <- (1 - sum(predsRF == testing$classe)/length(predsRF))*100
+outOfSampleError
+```
+
+So the out of sample error is less than 0.1 percent (around 0.07%).
+
+#Prediction Assignment Submission
+The predictions for test data are written to files for the submission in the R code below.
+
+```{r cache=TRUE}
+predsSubmission <- predict(modelFitRF, testDataSet, type = "class")
+
+for(iSubmit in 1:dim(testDataSet)[1]){
+  fileName = paste("problem_id_", iSubmit, ".txt", sep = "")
+  write.table(predsSubmission[iSubmit], file = fileName, col.names = FALSE, row.names = FALSE, quote = FALSE)
+}
+```
